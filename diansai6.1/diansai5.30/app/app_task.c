@@ -34,25 +34,66 @@ extern float Motor_Position_Control_Loop(float target_pos, float actual_pos);
 #define TASK3_YAW_D_SEEK        (-180.0f)
 
 // 速度
-#define TASK3_DIAG_SPEED        (15.0f)   // 斜穿速度，按你的要求改成 15.0f
-#define TASK3_ALIGN_SPEED       (3.0f)    // 回正时速度，不能太快
-#define TASK3_SEEK_SPEED        (8.0f)    // 直走寻线速度，建议不要 15，否则会继续冲过线
-#define TASK3_ARC_SPEED         (15.0f)    // 弯道巡线速度
+
+// 斜穿最高速度仍然是 15.0f
+#define TASK3_DIAG_SPEED        (30.0f)
+
+// 斜穿起步速度，避免一下子冲出去
+#define TASK3_DIAG_START_SPEED  (13.0f)
+
+// 斜穿末端速度，准备回正前先降速
+#define TASK3_DIAG_END_SPEED    (8.0f)
+
+// 回正速度不要太快，越快越晃
+#define TASK3_ALIGN_SPEED       (1.8f)
+
+// 寻线速度
+#define TASK3_SEEK_SPEED        (3.0f)
+
+// 弯道速度
+#define TASK3_ARC_SPEED         (30.0f)
+
+// 斜穿高速距离
+#define TASK3_DIAG_FAST_CM      (120.0f)
+
+
+// 斜穿起步加速距离
+#define TASK3_DIAG_ACCEL_CM     (25.0f)
+
+// 斜穿末端减速距离
+#define TASK3_DIAG_DECEL_CM     (20.0f)
+
+// 回正时目标角每 20ms 最多变化多少度
+// 越小越稳，越大越快
+#define TASK3_YAW_RAMP_STEP     (1.2f)
+
+// 回正允许误差
+#define TASK3_ALIGN_ERR_DEG     (4.0f)
+
+// 回正稳定时间
+#define TASK3_ALIGN_STABLE_MS   (180)
+
+
 
 // 距离
 // 因为斜穿速度变成 15，不能再跑满 128cm，否则必然冲过头
-#define TASK3_DIAG_FAST_CM      (100.0f)   // 高速斜穿距离
+
 #define TASK3_DIAG_MAX_CM       (135.0f)  // 最多寻线距离，防死等
 
 // 弯道判定
-#define TASK3_ARC_MIN_CM        (85.0f)
-#define TASK3_ARC_MAX_CM        (138.0f)
+#define TASK3_ARC_MIN_CM        (120.0f)    // 过了这个距离才允许用 yaw 判断到点
+#define TASK3_ARC_FORCE_CM      (125.0f)   // 到这个距离直接强制认为到点
+#define TASK3_ARC_MAX_CM        (130.0f)   // 最终保护距离，不建议再用 138
+
 
 // yaw 判断
-#define TASK3_BACK_YAW_OK()     ((g_yaw >= 150.0f) || (g_yaw <= -150.0f))
-#define TASK3_FRONT_YAW_OK()    (fabs(g_yaw) <= 18.0f)
+#define TASK3_BACK_YAW_OK()     ((g_yaw >= 145.0f) || (g_yaw <= -145.0f))
+#define TASK3_FRONT_YAW_OK()    (fabs(g_yaw) <= 24.0f)
 
-
+#define TASK3_START_ENTER_SPEED     (1.5f)
+#define TASK3_START_YAW_STEP        (0.3f)
+#define TASK3_START_ERR_DEG         (3.0f)
+#define TASK3_START_STABLE_MS       (180)
 
 
 // 全局任务模式定义
@@ -67,7 +108,7 @@ static void Run_Task_4(uint32_t current_time_ms);
 void App_Task_Init(void)
 {
     // 比赛/测试调试时，修改此枚举切换赛题任务
-    g_current_mode = MODE_TASK_3; 
+    g_current_mode = MODE_TASK_4; 
 }
 
 void App_Task_Run(uint32_t current_time_ms)
@@ -240,7 +281,68 @@ static float Task_Get_Yaw_Error(float target_yaw, float actual_yaw)
     return err;
 }
 
+/**
+ * @brief  目标角度缓慢过渡，避免目标角硬跳导致车身大幅摆动
+ */
+static float Task_Ramp_Yaw_Target(float current_target, float final_target, float max_step)
+{
+    float err = Task_Get_Yaw_Error(final_target, current_target);
 
+    if (err > max_step)
+    {
+        current_target += max_step;
+    }
+    else if (err < -max_step)
+    {
+        current_target -= max_step;
+    }
+    else
+    {
+        current_target = final_target;
+    }
+
+    while (current_target > 180.0f)  current_target -= 360.0f;
+    while (current_target < -180.0f) current_target += 360.0f;
+
+    return current_target;
+}
+
+/**
+ * @brief  斜穿速度曲线：起步渐升，中段 15.0f，末端降速
+ */
+static float Task_Diag_Speed_Profile(void)
+{
+    float dist_cm = (float)g_odom_distance_count / 66.6f;
+    float speed = TASK3_DIAG_SPEED;
+
+    // 起步阶段：6.0 -> 15.0
+    if (dist_cm < TASK3_DIAG_ACCEL_CM)
+    {
+        speed = TASK3_DIAG_START_SPEED +
+                (TASK3_DIAG_SPEED - TASK3_DIAG_START_SPEED) *
+                (dist_cm / TASK3_DIAG_ACCEL_CM);
+    }
+    // 末端阶段：15.0 -> 8.0
+    else if (dist_cm > (TASK3_DIAG_FAST_CM - TASK3_DIAG_DECEL_CM))
+    {
+        float decel_pos = dist_cm - (TASK3_DIAG_FAST_CM - TASK3_DIAG_DECEL_CM);
+
+        speed = TASK3_DIAG_SPEED -
+                (TASK3_DIAG_SPEED - TASK3_DIAG_END_SPEED) *
+                (decel_pos / TASK3_DIAG_DECEL_CM);
+
+        if (speed < TASK3_DIAG_END_SPEED)
+        {
+            speed = TASK3_DIAG_END_SPEED;
+        }
+    }
+    else
+    {
+        speed = TASK3_DIAG_SPEED;
+    }
+
+    return speed;
+}
 
 
 
@@ -261,39 +363,107 @@ static void Run_Task_3(uint32_t current_time_ms)
         // -------------------------------------------------
         // step 0：A -> C，高速斜穿
         // -------------------------------------------------
-        case 0:
-            g_vision_enable = 0;
-            g_main_target_yaw = TASK3_YAW_A_TO_C;
-            g_base_speed = TASK3_DIAG_SPEED;
+       case 0:
 
-            if (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_FAST_CM))
-            {
-                stable_timer = current_time_ms;
-                step = 1;
-            }
-            break;
+{
+					static uint8_t start_phase_ac = 0;
+					static float ramp_yaw_ac = 0.0f;
+					static uint8_t ramp_init_ac = 0;
+
+					g_vision_enable = 0;
+
+					// phase 0：起步缓慢把目标角从当前yaw过渡到A->C斜穿角
+					if (start_phase_ac == 0)
+					{
+							if (ramp_init_ac == 0)
+							{
+									ramp_yaw_ac = g_yaw;
+									ramp_init_ac = 1;
+
+									g_turn_offset = 0.0f;
+									g_odom_distance_count = 0;
+									stable_timer = current_time_ms;
+							}
+
+							ramp_yaw_ac = Task_Ramp_Yaw_Target(ramp_yaw_ac,
+																								 TASK3_YAW_A_TO_C,
+																								 TASK3_START_YAW_STEP);
+
+							g_main_target_yaw = ramp_yaw_ac;
+							g_base_speed = TASK3_START_ENTER_SPEED;
+
+							current_err = Task_Get_Yaw_Error(TASK3_YAW_A_TO_C, g_yaw);
+
+							if (fabs(current_err) > TASK3_START_ERR_DEG)
+							{
+									stable_timer = current_time_ms;
+							}
+
+							if (current_time_ms - stable_timer >= TASK3_START_STABLE_MS)
+							{
+									g_turn_offset = 0.0f;
+									g_odom_distance_count = 0;
+									start_phase_ac = 1;
+							}
+					}
+					// phase 1：正式A->C高速斜穿
+					else
+					{
+							g_main_target_yaw = TASK3_YAW_A_TO_C;
+							g_base_speed = Task_Diag_Speed_Profile();
+
+							if (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_FAST_CM))
+							{
+									stable_timer = current_time_ms;
+
+									start_phase_ac = 0;
+									ramp_init_ac = 0;
+									step = 1;
+							}
+					}
+
+					break;
+}
 
         // -------------------------------------------------
         // step 1：A -> C 后，车头修正到 0°，准备直走寻线
         // -------------------------------------------------
         case 1:
-            g_vision_enable = 0;
-            g_main_target_yaw = TASK3_YAW_C_SEEK;
-            g_base_speed = TASK3_ALIGN_SPEED;
+					{
+							static float ramp_yaw_c = 0.0f;
+							static uint8_t ramp_init_c = 0;
 
-            current_err = Task_Get_Yaw_Error(TASK3_YAW_C_SEEK, g_yaw);
+							g_vision_enable = 0;
+							g_base_speed = TASK3_ALIGN_SPEED;
 
-            if (fabs(current_err) > 5.0f)
-            {
-                stable_timer = current_time_ms;
-            }
+							// 第一次进入回正阶段时，用当前 yaw 作为缓变起点
+							if (ramp_init_c == 0)
+							{
+									ramp_yaw_c = g_yaw;
+									ramp_init_c = 1;
+							}
 
-            // 车头稳定朝 0° 后，进入直走寻线
-            if (current_time_ms - stable_timer >= 120)
-            {
-                step = 2;
-            }
-            break;
+							// 目标角慢慢逼近 0°
+							ramp_yaw_c = Task_Ramp_Yaw_Target(ramp_yaw_c,
+																								TASK3_YAW_C_SEEK,
+																								TASK3_YAW_RAMP_STEP);
+
+							g_main_target_yaw = ramp_yaw_c;
+
+							current_err = Task_Get_Yaw_Error(TASK3_YAW_C_SEEK, g_yaw);
+
+							if (fabs(current_err) > TASK3_ALIGN_ERR_DEG)
+							{
+									stable_timer = current_time_ms;
+							}
+
+							if (current_time_ms - stable_timer >= TASK3_ALIGN_STABLE_MS)
+							{
+									ramp_init_c = 0;
+									step = 2;
+							}
+							break;
+}
 
         // -------------------------------------------------
         // step 2：朝 0° 直走寻 C 点弧线
@@ -334,21 +504,22 @@ static void Run_Task_3(uint32_t current_time_ms)
         // step 4：C -> B，视觉巡线
         // -------------------------------------------------
         case 4:
-            g_vision_enable = 1;
-            g_main_target_yaw = g_yaw;
-            g_base_speed = TASK3_ARC_SPEED;
+							g_vision_enable = 1;
+							g_main_target_yaw = g_yaw;
+							g_base_speed = TASK3_ARC_SPEED;
 
-            if ((g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MIN_CM) && TASK3_BACK_YAW_OK()) ||
-                (g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MAX_CM)))
-            {
-                g_vision_enable = 0;
-                g_base_speed = 0.0f;
-                LED_ON();
+							if ((g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MIN_CM) && TASK3_BACK_YAW_OK()) ||
+									(g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_FORCE_CM)))
+							{
+									g_vision_enable = 0;
+									g_base_speed = 0.0f;
+									g_turn_offset = 0.0f;
+									LED_ON();
 
-                led_timer = current_time_ms;
-                step = 5;
-            }
-            break;
+									led_timer = current_time_ms;
+									step = 5;
+							}
+							break;
 
         // -------------------------------------------------
         // step 5：B 点提示
@@ -392,38 +563,106 @@ static void Run_Task_3(uint32_t current_time_ms)
         // -------------------------------------------------
         // step 7：B -> D，高速斜穿
         // -------------------------------------------------
-        case 7:
-            g_vision_enable = 0;
-            g_main_target_yaw = TASK3_YAW_B_TO_D;
-            g_base_speed = TASK3_DIAG_SPEED;
+     case 7:
+{
+						static uint8_t start_phase_bd = 0;
+						static float ramp_yaw_bd = 0.0f;
+						static uint8_t ramp_init_bd = 0;
 
-            if (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_FAST_CM))
-            {
-                stable_timer = current_time_ms;
-                step = 8;
-            }
-            break;
+						g_vision_enable = 0;
+
+						// phase 0：从当前yaw缓慢过渡到B->D斜穿角
+						if (start_phase_bd == 0)
+						{
+								if (ramp_init_bd == 0)
+								{
+										ramp_yaw_bd = g_yaw;
+										ramp_init_bd = 1;
+
+										g_turn_offset = 0.0f;
+										g_odom_distance_count = 0;
+										stable_timer = current_time_ms;
+								}
+
+								ramp_yaw_bd = Task_Ramp_Yaw_Target(ramp_yaw_bd,
+																									 TASK3_YAW_B_TO_D,
+																									 TASK3_START_YAW_STEP);
+
+								g_main_target_yaw = ramp_yaw_bd;
+								g_base_speed = TASK3_START_ENTER_SPEED;
+
+								current_err = Task_Get_Yaw_Error(TASK3_YAW_B_TO_D, g_yaw);
+
+								if (fabs(current_err) > TASK3_START_ERR_DEG)
+								{
+										stable_timer = current_time_ms;
+								}
+
+								if (current_time_ms - stable_timer >= TASK3_START_STABLE_MS)
+								{
+										g_turn_offset = 0.0f;
+										g_odom_distance_count = 0;
+										start_phase_bd = 1;
+								}
+						}
+						// phase 1：正式B->D高速斜穿
+						else
+						{
+								g_main_target_yaw = TASK3_YAW_B_TO_D;
+								g_base_speed = Task_Diag_Speed_Profile();
+
+								if (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_FAST_CM))
+								{
+										stable_timer = current_time_ms;
+
+										start_phase_bd = 0;
+										ramp_init_bd = 0;
+										step = 8;
+								}
+						}
+
+						break;
+}
 
         // -------------------------------------------------
         // step 8：B -> D 后，车头修正到 -180°，准备直走寻线
         // -------------------------------------------------
         case 8:
-            g_vision_enable = 0;
-            g_main_target_yaw = TASK3_YAW_D_SEEK;
-            g_base_speed = TASK3_ALIGN_SPEED;
+{
+							static float ramp_yaw_d = 0.0f;
+							static uint8_t ramp_init_d = 0;
 
-            current_err = Task_Get_Yaw_Error(TASK3_YAW_D_SEEK, g_yaw);
+							g_vision_enable = 0;
+							g_base_speed = TASK3_ALIGN_SPEED;
 
-            if (fabs(current_err) > 5.0f)
-            {
-                stable_timer = current_time_ms;
-            }
+							// 第一次进入 D 点回正阶段时，用当前 yaw 作为缓变起点
+							if (ramp_init_d == 0)
+							{
+									ramp_yaw_d = g_yaw;
+									ramp_init_d = 1;
+							}
 
-            if (current_time_ms - stable_timer >= 120)
-            {
-                step = 9;
-            }
-            break;
+							// 目标角慢慢逼近 -180°
+							ramp_yaw_d = Task_Ramp_Yaw_Target(ramp_yaw_d,
+																								TASK3_YAW_D_SEEK,
+																								TASK3_YAW_RAMP_STEP);
+
+							g_main_target_yaw = ramp_yaw_d;
+
+							current_err = Task_Get_Yaw_Error(TASK3_YAW_D_SEEK, g_yaw);
+
+							if (fabs(current_err) > TASK3_ALIGN_ERR_DEG)
+							{
+									stable_timer = current_time_ms;
+							}
+
+							if (current_time_ms - stable_timer >= TASK3_ALIGN_STABLE_MS)
+							{
+									ramp_init_d = 0;
+									step = 9;
+							}
+							break;
+}
 
         // -------------------------------------------------
         // step 9：朝 -180° 直走寻 D 点弧线
@@ -464,21 +703,22 @@ static void Run_Task_3(uint32_t current_time_ms)
         // step 11：D -> A，视觉巡线
         // -------------------------------------------------
         case 11:
-            g_vision_enable = 1;
-            g_main_target_yaw = g_yaw;
-            g_base_speed = TASK3_ARC_SPEED;
+						g_vision_enable = 1;
+						g_main_target_yaw = g_yaw;
+						g_base_speed = TASK3_ARC_SPEED;
 
-            if ((g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MIN_CM) && TASK3_FRONT_YAW_OK()) ||
-                (g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MAX_CM)))
-            {
-                g_vision_enable = 0;
-                g_base_speed = 0.0f;
-                LED_ON();
+						if ((g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MIN_CM) && TASK3_FRONT_YAW_OK()) ||
+								(g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_FORCE_CM)))
+						{
+								g_vision_enable = 0;
+								g_base_speed = 0.0f;
+								g_turn_offset = 0.0f;
+								LED_ON();
 
-                led_timer = current_time_ms;
-                step = 12;
-            }
-            break;
+								led_timer = current_time_ms;
+								step = 12;
+						}
+						break;
 
         // -------------------------------------------------
         // step 12：A 点终点提示
@@ -523,34 +763,100 @@ static void Run_Task_4(uint32_t current_time_ms)
     switch (step)
     {
         case 0:
-            g_vision_enable = 0;
-            g_main_target_yaw = TASK3_YAW_A_TO_C;
-            g_base_speed = TASK3_DIAG_SPEED;
+{
+								static uint8_t start_phase_ac = 0;
+								static float ramp_yaw_ac = 0.0f;
+								static uint8_t ramp_init_ac = 0;
 
-            if (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_FAST_CM))
-            {
-                stable_timer = current_time_ms;
-                step = 1;
-            }
-            break;
+								g_vision_enable = 0;
+
+								// phase 0：每圈从A点起步时，先缓慢进入A->C斜穿角
+								if (start_phase_ac == 0)
+								{
+										if (ramp_init_ac == 0)
+										{
+												ramp_yaw_ac = g_yaw;
+												ramp_init_ac = 1;
+
+												g_turn_offset = 0.0f;
+												g_odom_distance_count = 0;
+												stable_timer = current_time_ms;
+										}
+
+										ramp_yaw_ac = Task_Ramp_Yaw_Target(ramp_yaw_ac,
+																											 TASK3_YAW_A_TO_C,
+																											 TASK3_START_YAW_STEP);
+
+										g_main_target_yaw = ramp_yaw_ac;
+										g_base_speed = TASK3_START_ENTER_SPEED;
+
+										current_err = Task_Get_Yaw_Error(TASK3_YAW_A_TO_C, g_yaw);
+
+										if (fabs(current_err) > TASK3_START_ERR_DEG)
+										{
+												stable_timer = current_time_ms;
+										}
+
+										if (current_time_ms - stable_timer >= TASK3_START_STABLE_MS)
+										{
+												g_turn_offset = 0.0f;
+												g_odom_distance_count = 0;
+												start_phase_ac = 1;
+										}
+								}
+								// phase 1：正式A->C斜穿
+								else
+								{
+										g_main_target_yaw = TASK3_YAW_A_TO_C;
+										g_base_speed = Task_Diag_Speed_Profile();
+
+										if (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_FAST_CM))
+										{
+												stable_timer = current_time_ms;
+
+												start_phase_ac = 0;
+												ramp_init_ac = 0;
+												step = 1;
+										}
+								}
+
+								break;
+}
 
         case 1:
-            g_vision_enable = 0;
-            g_main_target_yaw = TASK3_YAW_C_SEEK;
-            g_base_speed = TASK3_ALIGN_SPEED;
+{
+						static float ramp_yaw_c = 0.0f;
+						static uint8_t ramp_init_c = 0;
 
-            current_err = Task_Get_Yaw_Error(TASK3_YAW_C_SEEK, g_yaw);
+						g_vision_enable = 0;
+						g_base_speed = TASK3_ALIGN_SPEED;
 
-            if (fabs(current_err) > 5.0f)
-            {
-                stable_timer = current_time_ms;
-            }
+						if (ramp_init_c == 0)
+						{
+								ramp_yaw_c = g_yaw;
+								ramp_init_c = 1;
+						}
 
-            if (current_time_ms - stable_timer >= 120)
-            {
-                step = 2;
-            }
-            break;
+						ramp_yaw_c = Task_Ramp_Yaw_Target(ramp_yaw_c,
+																							TASK3_YAW_C_SEEK,
+																							TASK3_YAW_RAMP_STEP);
+
+						g_main_target_yaw = ramp_yaw_c;
+
+						current_err = Task_Get_Yaw_Error(TASK3_YAW_C_SEEK, g_yaw);
+
+						if (fabs(current_err) > TASK3_ALIGN_ERR_DEG)
+						{
+								stable_timer = current_time_ms;
+						}
+
+						if (current_time_ms - stable_timer >= TASK3_ALIGN_STABLE_MS)
+						{
+								ramp_init_c = 0;
+								step = 2;
+						}
+						break;
+}
 
         case 2:
             g_vision_enable = 0;
@@ -581,22 +887,23 @@ static void Run_Task_4(uint32_t current_time_ms)
             }
             break;
 
-        case 4:
-            g_vision_enable = 1;
-            g_main_target_yaw = g_yaw;
-            g_base_speed = TASK3_ARC_SPEED;
+				 case 4:
+						g_vision_enable = 1;
+						g_main_target_yaw = g_yaw;
+						g_base_speed = TASK3_ARC_SPEED;
 
-            if ((g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MIN_CM) && TASK3_BACK_YAW_OK()) ||
-                (g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MAX_CM)))
-            {
-                g_vision_enable = 0;
-                g_base_speed = 0.0f;
-                LED_ON();
+						if ((g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MIN_CM) && TASK3_BACK_YAW_OK()) ||
+								(g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_FORCE_CM)))
+						{
+								g_vision_enable = 0;
+								g_base_speed = 0.0f;
+								g_turn_offset = 0.0f;
+								LED_ON();
 
-                led_timer = current_time_ms;
-                step = 5;
-            }
-            break;
+								led_timer = current_time_ms;
+								step = 5;
+						}
+						break;
 
         case 5:
             g_base_speed = 0.0f;
@@ -632,34 +939,100 @@ static void Run_Task_4(uint32_t current_time_ms)
             break;
 
         case 7:
-            g_vision_enable = 0;
-            g_main_target_yaw = TASK3_YAW_B_TO_D;
-            g_base_speed = TASK3_DIAG_SPEED;
+{
+							static uint8_t start_phase_bd = 0;
+							static float ramp_yaw_bd = 0.0f;
+							static uint8_t ramp_init_bd = 0;
 
-            if (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_FAST_CM))
-            {
-                stable_timer = current_time_ms;
-                step = 8;
-            }
-            break;
+							g_vision_enable = 0;
+
+							// phase 0：从B点出发时，先缓慢进入B->D斜穿角
+							if (start_phase_bd == 0)
+							{
+									if (ramp_init_bd == 0)
+									{
+											ramp_yaw_bd = g_yaw;
+											ramp_init_bd = 1;
+
+											g_turn_offset = 0.0f;
+											g_odom_distance_count = 0;
+											stable_timer = current_time_ms;
+									}
+
+									ramp_yaw_bd = Task_Ramp_Yaw_Target(ramp_yaw_bd,
+																										 TASK3_YAW_B_TO_D,
+																										 TASK3_START_YAW_STEP);
+
+									g_main_target_yaw = ramp_yaw_bd;
+									g_base_speed = TASK3_START_ENTER_SPEED;
+
+									current_err = Task_Get_Yaw_Error(TASK3_YAW_B_TO_D, g_yaw);
+
+									if (fabs(current_err) > TASK3_START_ERR_DEG)
+									{
+											stable_timer = current_time_ms;
+									}
+
+									if (current_time_ms - stable_timer >= TASK3_START_STABLE_MS)
+									{
+											g_turn_offset = 0.0f;
+											g_odom_distance_count = 0;
+											start_phase_bd = 1;
+									}
+							}
+							// phase 1：正式B->D斜穿
+							else
+							{
+									g_main_target_yaw = TASK3_YAW_B_TO_D;
+									g_base_speed = Task_Diag_Speed_Profile();
+
+									if (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_FAST_CM))
+									{
+											stable_timer = current_time_ms;
+
+											start_phase_bd = 0;
+											ramp_init_bd = 0;
+											step = 8;
+									}
+							}
+
+							break;
+}
 
         case 8:
-            g_vision_enable = 0;
-            g_main_target_yaw = TASK3_YAW_D_SEEK;
-            g_base_speed = TASK3_ALIGN_SPEED;
+{
+						static float ramp_yaw_d = 0.0f;
+						static uint8_t ramp_init_d = 0;
 
-            current_err = Task_Get_Yaw_Error(TASK3_YAW_D_SEEK, g_yaw);
+						g_vision_enable = 0;
+						g_base_speed = TASK3_ALIGN_SPEED;
 
-            if (fabs(current_err) > 5.0f)
-            {
-                stable_timer = current_time_ms;
-            }
+						if (ramp_init_d == 0)
+						{
+								ramp_yaw_d = g_yaw;
+								ramp_init_d = 1;
+						}
 
-            if (current_time_ms - stable_timer >= 120)
-            {
-                step = 9;
-            }
-            break;
+						ramp_yaw_d = Task_Ramp_Yaw_Target(ramp_yaw_d,
+																							TASK3_YAW_D_SEEK,
+																							TASK3_YAW_RAMP_STEP);
+
+						g_main_target_yaw = ramp_yaw_d;
+
+						current_err = Task_Get_Yaw_Error(TASK3_YAW_D_SEEK, g_yaw);
+
+						if (fabs(current_err) > TASK3_ALIGN_ERR_DEG)
+						{
+								stable_timer = current_time_ms;
+						}
+
+						if (current_time_ms - stable_timer >= TASK3_ALIGN_STABLE_MS)
+						{
+								ramp_init_d = 0;
+								step = 9;
+						}
+						break;
+}
 
         case 9:
             g_vision_enable = 0;
@@ -691,44 +1064,50 @@ static void Run_Task_4(uint32_t current_time_ms)
             break;
 
         case 11:
-            g_vision_enable = 1;
-            g_main_target_yaw = g_yaw;
-            g_base_speed = TASK3_ARC_SPEED;
+						g_vision_enable = 1;
+						g_main_target_yaw = g_yaw;
+						g_base_speed = TASK3_ARC_SPEED;
 
-            if ((g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MIN_CM) && TASK3_FRONT_YAW_OK()) ||
-                (g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MAX_CM)))
-            {
-                g_vision_enable = 0;
-                g_base_speed = 0.0f;
-                LED_ON();
+						if ((g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MIN_CM) && TASK3_FRONT_YAW_OK()) ||
+								(g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_FORCE_CM)))
+						{
+								g_vision_enable = 0;
+								g_base_speed = 0.0f;
+								g_turn_offset = 0.0f;
+								LED_ON();
 
-                led_timer = current_time_ms;
-                step = 12;
-            }
-            break;
+								led_timer = current_time_ms;
+								step = 12;
+						}
+						break;
 
         case 12:
-            g_base_speed = 0.0f;
-            g_vision_enable = 0;
+						g_base_speed = 0.0f;
+						g_vision_enable = 0;
 
-            if (current_time_ms - led_timer >= 300)
-            {
-                LED_OFF();
+						if (current_time_ms - led_timer >= 300)
+						{
+								LED_OFF();
 
-                lap_count++;
+								lap_count++;
 
-                if (lap_count < 4)
-                {
-                    g_odom_distance_count = 0;
-                    stable_timer = current_time_ms;
-                    step = 0;
-                }
-                else
-                {
-                    step = 13;
-                }
-            }
-            break;
+								if (lap_count < 4)
+								{
+										g_base_speed = 0.0f;
+										g_vision_enable = 0;
+										g_turn_offset = 0.0f;
+										g_main_target_yaw = 0.0f;
+										g_odom_distance_count = 0;
+
+										stable_timer = current_time_ms;
+										step = 0;
+								}
+								else
+								{
+										step = 13;
+								}
+						}
+						break;
 
         case 13:
             g_base_speed = 0.0f;
