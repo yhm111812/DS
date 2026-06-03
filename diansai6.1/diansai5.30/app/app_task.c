@@ -36,10 +36,10 @@ extern float Motor_Position_Control_Loop(float target_pos, float actual_pos);
 // 速度
 
 // 斜穿最高速度仍然是 15.0f
-#define TASK3_DIAG_SPEED        (30.0f)
+#define TASK3_DIAG_SPEED        (25.0f)
 
 // 斜穿起步速度，避免一下子冲出去
-#define TASK3_DIAG_START_SPEED  (13.0f)
+#define TASK3_DIAG_START_SPEED  (8.0f)
 
 // 斜穿末端速度，准备回正前先降速
 #define TASK3_DIAG_END_SPEED    (8.0f)
@@ -51,7 +51,7 @@ extern float Motor_Position_Control_Loop(float target_pos, float actual_pos);
 #define TASK3_SEEK_SPEED        (3.0f)
 
 // 弯道速度
-#define TASK3_ARC_SPEED         (30.0f)
+#define TASK3_ARC_SPEED         (25.0f)
 
 // 斜穿高速距离
 #define TASK3_DIAG_FAST_CM      (120.0f)
@@ -81,9 +81,9 @@ extern float Motor_Position_Control_Loop(float target_pos, float actual_pos);
 #define TASK3_DIAG_MAX_CM       (135.0f)  // 最多寻线距离，防死等
 
 // 弯道判定
-#define TASK3_ARC_MIN_CM        (120.0f)    // 过了这个距离才允许用 yaw 判断到点
+#define TASK3_ARC_MIN_CM        (115.0f)    // 过了这个距离才允许用 yaw 判断到点
 #define TASK3_ARC_FORCE_CM      (125.0f)   // 到这个距离直接强制认为到点
-#define TASK3_ARC_MAX_CM        (130.0f)   // 最终保护距离，不建议再用 138
+#define TASK3_ARC_MAX_CM        (125.0f)   // 最终保护距离，不建议再用 138
 
 
 // yaw 判断
