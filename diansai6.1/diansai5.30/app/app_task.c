@@ -18,6 +18,42 @@ extern float Motor_Position_Control_Loop(float target_pos, float actual_pos);
 
 // --- 核心里程标定宏 ---
 #define CM_TO_PULSE(cm)  ((int32_t)((cm) * 66.6f)) 
+// =========================================================
+// 任务3/4：高速斜穿 + 回正直走寻线 参数
+// =========================================================
+
+// 斜穿角度
+#define TASK3_YAW_A_TO_C        (-38.6f)
+#define TASK3_YAW_B_TO_D        (-141.4f)
+
+// 斜穿后寻线前的直走方向
+// A -> C 到 C 点后，准备进入 C -> B 弧线，车头修正到 0°
+#define TASK3_YAW_C_SEEK        (0.0f)
+
+// B -> D 到 D 点后，准备进入 D -> A 弧线，车头修正到 -180°
+#define TASK3_YAW_D_SEEK        (-180.0f)
+
+// 速度
+#define TASK3_DIAG_SPEED        (15.0f)   // 斜穿速度，按你的要求改成 15.0f
+#define TASK3_ALIGN_SPEED       (3.0f)    // 回正时速度，不能太快
+#define TASK3_SEEK_SPEED        (8.0f)    // 直走寻线速度，建议不要 15，否则会继续冲过线
+#define TASK3_ARC_SPEED         (15.0f)    // 弯道巡线速度
+
+// 距离
+// 因为斜穿速度变成 15，不能再跑满 128cm，否则必然冲过头
+#define TASK3_DIAG_FAST_CM      (100.0f)   // 高速斜穿距离
+#define TASK3_DIAG_MAX_CM       (135.0f)  // 最多寻线距离，防死等
+
+// 弯道判定
+#define TASK3_ARC_MIN_CM        (85.0f)
+#define TASK3_ARC_MAX_CM        (138.0f)
+
+// yaw 判断
+#define TASK3_BACK_YAW_OK()     ((g_yaw >= 150.0f) || (g_yaw <= -150.0f))
+#define TASK3_FRONT_YAW_OK()    (fabs(g_yaw) <= 18.0f)
+
+
+
 
 // 全局任务模式定义
 RaceMode_e g_current_mode = MODE_WAIT; 
@@ -31,7 +67,7 @@ static void Run_Task_4(uint32_t current_time_ms);
 void App_Task_Init(void)
 {
     // 比赛/测试调试时，修改此枚举切换赛题任务
-    g_current_mode = MODE_TASK_2; 
+    g_current_mode = MODE_TASK_3; 
 }
 
 void App_Task_Run(uint32_t current_time_ms)
@@ -173,7 +209,7 @@ static void Run_Task_2(uint32_t current_time_ms)
         case 6: // D -> A (顺向弯道巡线返回)
             g_vision_enable = 1; 
             g_main_target_yaw = g_yaw; // 目标跟随实际，拒绝拔河
-            g_base_speed = 6.0f; 
+            g_base_speed = 15.0f; 
             
             if (g_odom_distance_count >= CM_TO_PULSE(110.0f) && (fabs(g_yaw) <= 10.0f)) {
                 step = 7; led_timer = current_time_ms;
@@ -194,211 +230,509 @@ static void Run_Task_2(uint32_t current_time_ms)
     }
 }
 
+static float Task_Get_Yaw_Error(float target_yaw, float actual_yaw)
+{
+    float err = target_yaw - actual_yaw;
+
+    while (err > 180.0f)  err -= 360.0f;
+    while (err < -180.0f) err += 360.0f;
+
+    return err;
+}
+
+
+
+
+
 // =========================================================================
-// 🚀 任务3：A -> C -> B -> D -> A (对角线交叉斜穿，包含逆向过弯)
+// 🚀 任务3：A -> C -> B -> D -> A
+// 高速斜穿 + 回正直走寻线容错版
 // =========================================================================
 static void Run_Task_3(uint32_t current_time_ms)
 {
     static uint8_t step = 0;
     static uint32_t led_timer = 0;
-    static uint32_t stable_timer = 0; // 新增任务3专属硬等时间锁
-    
+    static uint32_t stable_timer = 0;
+
     float current_err = 0.0f;
 
     switch (step)
     {
-        case 0: // A -> C 交叉大对角线盲跑
-            g_vision_enable = 0; 
-            g_main_target_yaw = 38.6f; 
-            g_base_speed = Motor_Position_Control_Loop(CM_TO_PULSE(128.0f), g_odom_distance_count);
-            if (abs(g_odom_distance_count - CM_TO_PULSE(128.0f)) < CM_TO_PULSE(2.0f)) {
-                step = 1; led_timer = current_time_ms;
-            }
-            break;
-
-        case 1: // C点等灯指示
-            g_base_speed = 0.0f; LED_ON();
+        // -------------------------------------------------
+        // step 0：A -> C，高速斜穿
+        // -------------------------------------------------
+        case 0:
             g_vision_enable = 0;
-            if (current_time_ms - led_timer > 500) {
-                LED_OFF(); g_odom_distance_count = 0; step++;
+            g_main_target_yaw = TASK3_YAW_A_TO_C;
+            g_base_speed = TASK3_DIAG_SPEED;
+
+            if (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_FAST_CM))
+            {
+                stable_timer = current_time_ms;
+                step = 1;
             }
             break;
 
-        case 2: // C -> B 逆向巡线弯道（核心修正处）
-            g_vision_enable = 1;       // 🚨【修复】：必须赋予底层看线的权利，否则直接变瞎子冲场！
-            g_main_target_yaw = g_yaw; // 🚨【修复】：必须让航向跟随当前，彻底消灭双环内耗打摆子！
-            g_base_speed = 5.5f; 
-            if (g_odom_distance_count >= CM_TO_PULSE(125.6f)) {
-                step = 3; led_timer = current_time_ms;
-            }
-            break;
-
-        case 3: // 🚨【重大新增】：B点出弯车轮平复锁，干掉逆向弯强切引起的所有相反偏转！
-            g_vision_enable = 0;       // 视觉斩断
-            g_base_speed = 0.0f;       // 原地泄能
-            
-            // 逆向跑圈出弯时，车头物理上朝向后方直道。
-            // 依据顺逆时针的解算原理，此时锁定的对齐大方向应当为 -180.0f！
-            g_main_target_yaw = -180.0f; 
-
-            // 计算与 -180.0f 的真实控制误差
-            current_err = -180.0f - g_yaw; 
-            while(current_err > 180.0f)  current_err -= 360.0f;
-            while(current_err < -180.0f) current_err += 360.0f;
-
-            if (fabs(current_err) > 2.5f) {
-                stable_timer = current_time_ms; 
-            }
-            
-            // 在原地憋足 150 毫秒，强行让轮子恢复绝对平行状态！
-            if (current_time_ms - stable_timer >= 150) {
-                g_turn_offset = 0.0f; 
-                g_odom_distance_count = 0; 
-                step = 4; // 轮子扭正了，放行！
-            }
-            break;
-
-        case 4: // B -> D 交叉对角线斜穿盲跑
-            g_vision_enable = 0; 
-            g_main_target_yaw = -38.6f; 
-            g_base_speed = Motor_Position_Control_Loop(CM_TO_PULSE(128.0f), g_odom_distance_count);
-            if (abs(g_odom_distance_count - CM_TO_PULSE(128.0f)) < CM_TO_PULSE(2.0f)) {
-                step = 5; led_timer = current_time_ms;
-            }
-            break;
-
-        case 5: // D点等灯指示
-            g_base_speed = 0.0f; LED_ON();
+        // -------------------------------------------------
+        // step 1：A -> C 后，车头修正到 0°，准备直走寻线
+        // -------------------------------------------------
+        case 1:
             g_vision_enable = 0;
-            if (current_time_ms - led_timer > 500) {
-                LED_OFF(); g_odom_distance_count = 0; step++;
+            g_main_target_yaw = TASK3_YAW_C_SEEK;
+            g_base_speed = TASK3_ALIGN_SPEED;
+
+            current_err = Task_Get_Yaw_Error(TASK3_YAW_C_SEEK, g_yaw);
+
+            if (fabs(current_err) > 5.0f)
+            {
+                stable_timer = current_time_ms;
+            }
+
+            // 车头稳定朝 0° 后，进入直走寻线
+            if (current_time_ms - stable_timer >= 120)
+            {
+                step = 2;
             }
             break;
 
-        case 6: // D -> A 顺向弯道巡线返回
-            g_vision_enable = 1;       // 🚨【修复】：开视觉
-            g_main_target_yaw = g_yaw; // 🚨【修复】：防打架
-            g_base_speed = 5.5f; 
-            if (g_odom_distance_count >= CM_TO_PULSE(125.6f)) {
-                step = 7; led_timer = current_time_ms;
-            }
-            break;
-
-        case 7: // 回到A点，单圈结束
+        // -------------------------------------------------
+        // step 2：朝 0° 直走寻 C 点弧线
+        // -------------------------------------------------
+        case 2:
             g_vision_enable = 0;
-            g_base_speed = 0.0f; LED_ON();
-            if (current_time_ms - led_timer > 500) {
-                LED_OFF(); step = 8;
+            g_main_target_yaw = TASK3_YAW_C_SEEK;
+            g_base_speed = TASK3_SEEK_SPEED;
+
+            if ((Vision_Check_Timeout() == 1) ||
+                (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_MAX_CM)))
+            {
+                g_base_speed = 0.0f;
+                g_vision_enable = 0;
+                LED_ON();
+
+                led_timer = current_time_ms;
+                step = 3;
             }
             break;
 
-        case 8: g_base_speed = 0.0f; g_vision_enable = 0; break;
+        // -------------------------------------------------
+        // step 3：C 点提示，清零里程
+        // -------------------------------------------------
+        case 3:
+            g_base_speed = 0.0f;
+            g_vision_enable = 0;
+
+            if (current_time_ms - led_timer >= 400)
+            {
+                LED_OFF();
+                g_odom_distance_count = 0;
+                step = 4;
+            }
+            break;
+
+        // -------------------------------------------------
+        // step 4：C -> B，视觉巡线
+        // -------------------------------------------------
+        case 4:
+            g_vision_enable = 1;
+            g_main_target_yaw = g_yaw;
+            g_base_speed = TASK3_ARC_SPEED;
+
+            if ((g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MIN_CM) && TASK3_BACK_YAW_OK()) ||
+                (g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MAX_CM)))
+            {
+                g_vision_enable = 0;
+                g_base_speed = 0.0f;
+                LED_ON();
+
+                led_timer = current_time_ms;
+                step = 5;
+            }
+            break;
+
+        // -------------------------------------------------
+        // step 5：B 点提示
+        // -------------------------------------------------
+        case 5:
+            g_base_speed = 0.0f;
+            g_vision_enable = 0;
+
+            if (current_time_ms - led_timer >= 400)
+            {
+                LED_OFF();
+                g_odom_distance_count = 0;
+                stable_timer = current_time_ms;
+                step = 6;
+            }
+            break;
+
+        // -------------------------------------------------
+        // step 6：B 点车头先稳定到 -180°
+        // -------------------------------------------------
+        case 6:
+            g_vision_enable = 0;
+            g_main_target_yaw = -180.0f;
+            g_base_speed = 0.0f;
+
+            current_err = Task_Get_Yaw_Error(-180.0f, g_yaw);
+
+            if (fabs(current_err) > 5.0f)
+            {
+                stable_timer = current_time_ms;
+            }
+
+            if (current_time_ms - stable_timer >= 120)
+            {
+                g_turn_offset = 0.0f;
+                g_odom_distance_count = 0;
+                step = 7;
+            }
+            break;
+
+        // -------------------------------------------------
+        // step 7：B -> D，高速斜穿
+        // -------------------------------------------------
+        case 7:
+            g_vision_enable = 0;
+            g_main_target_yaw = TASK3_YAW_B_TO_D;
+            g_base_speed = TASK3_DIAG_SPEED;
+
+            if (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_FAST_CM))
+            {
+                stable_timer = current_time_ms;
+                step = 8;
+            }
+            break;
+
+        // -------------------------------------------------
+        // step 8：B -> D 后，车头修正到 -180°，准备直走寻线
+        // -------------------------------------------------
+        case 8:
+            g_vision_enable = 0;
+            g_main_target_yaw = TASK3_YAW_D_SEEK;
+            g_base_speed = TASK3_ALIGN_SPEED;
+
+            current_err = Task_Get_Yaw_Error(TASK3_YAW_D_SEEK, g_yaw);
+
+            if (fabs(current_err) > 5.0f)
+            {
+                stable_timer = current_time_ms;
+            }
+
+            if (current_time_ms - stable_timer >= 120)
+            {
+                step = 9;
+            }
+            break;
+
+        // -------------------------------------------------
+        // step 9：朝 -180° 直走寻 D 点弧线
+        // -------------------------------------------------
+        case 9:
+            g_vision_enable = 0;
+            g_main_target_yaw = TASK3_YAW_D_SEEK;
+            g_base_speed = TASK3_SEEK_SPEED;
+
+            if ((Vision_Check_Timeout() == 1) ||
+                (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_MAX_CM)))
+            {
+                g_base_speed = 0.0f;
+                g_vision_enable = 0;
+                LED_ON();
+
+                led_timer = current_time_ms;
+                step = 10;
+            }
+            break;
+
+        // -------------------------------------------------
+        // step 10：D 点提示，清零里程
+        // -------------------------------------------------
+        case 10:
+            g_base_speed = 0.0f;
+            g_vision_enable = 0;
+
+            if (current_time_ms - led_timer >= 400)
+            {
+                LED_OFF();
+                g_odom_distance_count = 0;
+                step = 11;
+            }
+            break;
+
+        // -------------------------------------------------
+        // step 11：D -> A，视觉巡线
+        // -------------------------------------------------
+        case 11:
+            g_vision_enable = 1;
+            g_main_target_yaw = g_yaw;
+            g_base_speed = TASK3_ARC_SPEED;
+
+            if ((g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MIN_CM) && TASK3_FRONT_YAW_OK()) ||
+                (g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MAX_CM)))
+            {
+                g_vision_enable = 0;
+                g_base_speed = 0.0f;
+                LED_ON();
+
+                led_timer = current_time_ms;
+                step = 12;
+            }
+            break;
+
+        // -------------------------------------------------
+        // step 12：A 点终点提示
+        // -------------------------------------------------
+        case 12:
+            g_base_speed = 0.0f;
+            g_vision_enable = 0;
+
+            if (current_time_ms - led_timer >= 500)
+            {
+                LED_OFF();
+                step = 13;
+            }
+            break;
+
+        // -------------------------------------------------
+        // step 13：任务结束
+        // -------------------------------------------------
+        case 13:
+            g_base_speed = 0.0f;
+            g_vision_enable = 0;
+            break;
     }
 }
 
+
+
+
 // =========================================================================
-// 🚀 任务4：高刚度、大油门循环跑 4 圈任务3（无任何时序割裂）
+// 🚀 任务4：任务3路径循环4圈
+// 高速斜穿 + 回正直走寻线容错版
 // =========================================================================
 static void Run_Task_4(uint32_t current_time_ms)
 {
     static uint8_t step = 0;
+    static uint8_t lap_count = 0;
     static uint32_t led_timer = 0;
-    static uint32_t stable_timer = 0; // 任务4专属硬等时间锁
-    static uint8_t lap_count = 0; 
-    
+    static uint32_t stable_timer = 0;
+
     float current_err = 0.0f;
 
     switch (step)
     {
-        case 0: // A -> C 交叉斜穿
-            g_vision_enable = 0; 
-            g_main_target_yaw = 38.6f; 
-            g_base_speed = Motor_Position_Control_Loop(CM_TO_PULSE(128.0f), g_odom_distance_count);
-            if (abs(g_odom_distance_count - CM_TO_PULSE(128.0f)) < CM_TO_PULSE(2.0f)) {
-                step = 1; led_timer = current_time_ms;
-            }
-            break;
-
-        case 1: 
-            g_base_speed = 0.0f; LED_ON(); g_vision_enable = 0;
-            if (current_time_ms - led_timer > 500) {
-                LED_OFF(); g_odom_distance_count = 0; step++;
-            }
-            break;
-
-        case 2: // C -> B 逆向巡线
-            g_vision_enable = 1;       // 🚨【修复】：激活视觉
-            g_main_target_yaw = g_yaw; // 🚨【修复】：防互殴
-            g_base_speed = 5.5f; 
-            if (g_odom_distance_count >= CM_TO_PULSE(125.6f)) {
-                step = 3; led_timer = current_time_ms;
-            }
-            break;
-
-        case 3: // 🚨【重大新增】：任务4过弯强切物理平复锁！
-            g_vision_enable = 0; 
-            g_base_speed = 0.0f; 
-            g_main_target_yaw = -180.0f; 
-
-            current_err = -180.0f - g_yaw; 
-            while(current_err > 180.0f)  current_err -= 360.0f;
-            while(current_err < -180.0f) current_err += 360.0f;
-
-            if (fabs(current_err) > 2.5f) {
-                stable_timer = current_time_ms; 
-            }
-            if (current_time_ms - stable_timer >= 150) {
-                g_turn_offset = 0.0f; 
-                g_odom_distance_count = 0; 
-                step = 4; // 轮子平行，安全起跑！
-            }
-            break;
-
-        case 4: // B -> D 交叉斜穿盲跑
-            g_vision_enable = 0; 
-            g_main_target_yaw = -38.6f; 
-            g_base_speed = Motor_Position_Control_Loop(CM_TO_PULSE(128.0f), g_odom_distance_count);
-            if (abs(g_odom_distance_count - CM_TO_PULSE(128.0f)) < CM_TO_PULSE(2.0f)) {
-                step = 5; led_timer = current_time_ms;
-            }
-            break;
-
-        case 5: 
-            g_base_speed = 0.0f; LED_ON(); g_vision_enable = 0;
-            if (current_time_ms - led_timer > 500) {
-                LED_OFF(); g_odom_distance_count = 0; step++;
-            }
-            break;
-
-        case 6: // D -> A 顺向巡线
-            g_vision_enable = 1;       // 🚨【修复】：激活视觉
-            g_main_target_yaw = g_yaw; // 🚨【修复】：防打架
-            g_base_speed = 5.5f; 
-            if (g_odom_distance_count >= CM_TO_PULSE(125.6f)) {
-                step = 7; led_timer = current_time_ms;
-            }
-            break;
-
-        case 7: // 回到A点，处理圈数累加
+        case 0:
             g_vision_enable = 0;
-            g_base_speed = 0.0f; LED_ON();
-            if (current_time_ms - led_timer > 500) 
+            g_main_target_yaw = TASK3_YAW_A_TO_C;
+            g_base_speed = TASK3_DIAG_SPEED;
+
+            if (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_FAST_CM))
             {
-                LED_OFF(); 
-                lap_count++; 
-                
-                if (lap_count < 4) 
+                stable_timer = current_time_ms;
+                step = 1;
+            }
+            break;
+
+        case 1:
+            g_vision_enable = 0;
+            g_main_target_yaw = TASK3_YAW_C_SEEK;
+            g_base_speed = TASK3_ALIGN_SPEED;
+
+            current_err = Task_Get_Yaw_Error(TASK3_YAW_C_SEEK, g_yaw);
+
+            if (fabs(current_err) > 5.0f)
+            {
+                stable_timer = current_time_ms;
+            }
+
+            if (current_time_ms - stable_timer >= 120)
+            {
+                step = 2;
+            }
+            break;
+
+        case 2:
+            g_vision_enable = 0;
+            g_main_target_yaw = TASK3_YAW_C_SEEK;
+            g_base_speed = TASK3_SEEK_SPEED;
+
+            if ((Vision_Check_Timeout() == 1) ||
+                (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_MAX_CM)))
+            {
+                g_base_speed = 0.0f;
+                g_vision_enable = 0;
+                LED_ON();
+
+                led_timer = current_time_ms;
+                step = 3;
+            }
+            break;
+
+        case 3:
+            g_base_speed = 0.0f;
+            g_vision_enable = 0;
+
+            if (current_time_ms - led_timer >= 300)
+            {
+                LED_OFF();
+                g_odom_distance_count = 0;
+                step = 4;
+            }
+            break;
+
+        case 4:
+            g_vision_enable = 1;
+            g_main_target_yaw = g_yaw;
+            g_base_speed = TASK3_ARC_SPEED;
+
+            if ((g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MIN_CM) && TASK3_BACK_YAW_OK()) ||
+                (g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MAX_CM)))
+            {
+                g_vision_enable = 0;
+                g_base_speed = 0.0f;
+                LED_ON();
+
+                led_timer = current_time_ms;
+                step = 5;
+            }
+            break;
+
+        case 5:
+            g_base_speed = 0.0f;
+            g_vision_enable = 0;
+
+            if (current_time_ms - led_timer >= 300)
+            {
+                LED_OFF();
+                g_odom_distance_count = 0;
+                stable_timer = current_time_ms;
+                step = 6;
+            }
+            break;
+
+        case 6:
+            g_vision_enable = 0;
+            g_main_target_yaw = -180.0f;
+            g_base_speed = 0.0f;
+
+            current_err = Task_Get_Yaw_Error(-180.0f, g_yaw);
+
+            if (fabs(current_err) > 5.0f)
+            {
+                stable_timer = current_time_ms;
+            }
+
+            if (current_time_ms - stable_timer >= 120)
+            {
+                g_turn_offset = 0.0f;
+                g_odom_distance_count = 0;
+                step = 7;
+            }
+            break;
+
+        case 7:
+            g_vision_enable = 0;
+            g_main_target_yaw = TASK3_YAW_B_TO_D;
+            g_base_speed = TASK3_DIAG_SPEED;
+
+            if (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_FAST_CM))
+            {
+                stable_timer = current_time_ms;
+                step = 8;
+            }
+            break;
+
+        case 8:
+            g_vision_enable = 0;
+            g_main_target_yaw = TASK3_YAW_D_SEEK;
+            g_base_speed = TASK3_ALIGN_SPEED;
+
+            current_err = Task_Get_Yaw_Error(TASK3_YAW_D_SEEK, g_yaw);
+
+            if (fabs(current_err) > 5.0f)
+            {
+                stable_timer = current_time_ms;
+            }
+
+            if (current_time_ms - stable_timer >= 120)
+            {
+                step = 9;
+            }
+            break;
+
+        case 9:
+            g_vision_enable = 0;
+            g_main_target_yaw = TASK3_YAW_D_SEEK;
+            g_base_speed = TASK3_SEEK_SPEED;
+
+            if ((Vision_Check_Timeout() == 1) ||
+                (g_odom_distance_count >= CM_TO_PULSE(TASK3_DIAG_MAX_CM)))
+            {
+                g_base_speed = 0.0f;
+                g_vision_enable = 0;
+                LED_ON();
+
+                led_timer = current_time_ms;
+                step = 10;
+            }
+            break;
+
+        case 10:
+            g_base_speed = 0.0f;
+            g_vision_enable = 0;
+
+            if (current_time_ms - led_timer >= 300)
+            {
+                LED_OFF();
+                g_odom_distance_count = 0;
+                step = 11;
+            }
+            break;
+
+        case 11:
+            g_vision_enable = 1;
+            g_main_target_yaw = g_yaw;
+            g_base_speed = TASK3_ARC_SPEED;
+
+            if ((g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MIN_CM) && TASK3_FRONT_YAW_OK()) ||
+                (g_odom_distance_count >= CM_TO_PULSE(TASK3_ARC_MAX_CM)))
+            {
+                g_vision_enable = 0;
+                g_base_speed = 0.0f;
+                LED_ON();
+
+                led_timer = current_time_ms;
+                step = 12;
+            }
+            break;
+
+        case 12:
+            g_base_speed = 0.0f;
+            g_vision_enable = 0;
+
+            if (current_time_ms - led_timer >= 300)
+            {
+                LED_OFF();
+
+                lap_count++;
+
+                if (lap_count < 4)
                 {
-                    step = 0;                  // 踢回阶段0，开始下一圈
-                    g_odom_distance_count = 0; 
-                } 
-                else 
+                    g_odom_distance_count = 0;
+                    stable_timer = current_time_ms;
+                    step = 0;
+                }
+                else
                 {
-                    step = 8; // 跑满4圈去终点
+                    step = 13;
                 }
             }
             break;
 
-        case 8: g_base_speed = 0.0f; g_vision_enable = 0; break;
+        case 13:
+            g_base_speed = 0.0f;
+            g_vision_enable = 0;
+            break;
     }
 }
