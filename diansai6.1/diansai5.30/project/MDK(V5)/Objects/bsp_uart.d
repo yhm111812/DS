@@ -1,7 +1,7 @@
 .\objects\bsp_uart.o: ..\..\bsp\uart\bsp_uart.c
 .\objects\bsp_uart.o: ..\..\libraries\CMSIS\Device\ST\STM32F4xx\Include\stm32f4xx.h
 .\objects\bsp_uart.o: ..\..\libraries\CMSIS\Include\core_cm4.h
-.\objects\bsp_uart.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+.\objects\bsp_uart.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
 .\objects\bsp_uart.o: ..\..\libraries\CMSIS\Include\core_cmInstr.h
 .\objects\bsp_uart.o: ..\..\libraries\CMSIS\Include\core_cmFunc.h
 .\objects\bsp_uart.o: ..\..\libraries\CMSIS\Include\core_cmSimd.h
@@ -35,7 +35,7 @@
 .\objects\bsp_uart.o: ..\..\libraries\STM32F4xx_StdPeriph_Driver\inc\stm32f4xx_dcmi.h
 .\objects\bsp_uart.o: ..\..\libraries\STM32F4xx_StdPeriph_Driver\inc\stm32f4xx_fsmc.h
 .\objects\bsp_uart.o: ..\..\bsp\uart\bsp_uart.h
-.\objects\bsp_uart.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
-.\objects\bsp_uart.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
-.\objects\bsp_uart.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\math.h
+.\objects\bsp_uart.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
+.\objects\bsp_uart.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\string.h
+.\objects\bsp_uart.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\math.h
 .\objects\bsp_uart.o: ..\..\app\app_vision.h

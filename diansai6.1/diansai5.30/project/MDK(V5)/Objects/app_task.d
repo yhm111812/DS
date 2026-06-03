@@ -3,7 +3,7 @@
 .\objects\app_task.o: ..\..\board\board.h
 .\objects\app_task.o: ..\..\libraries\CMSIS\Device\ST\STM32F4xx\Include\stm32f4xx.h
 .\objects\app_task.o: ..\..\libraries\CMSIS\Include\core_cm4.h
-.\objects\app_task.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+.\objects\app_task.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
 .\objects\app_task.o: ..\..\libraries\CMSIS\Include\core_cmInstr.h
 .\objects\app_task.o: ..\..\libraries\CMSIS\Include\core_cmFunc.h
 .\objects\app_task.o: ..\..\libraries\CMSIS\Include\core_cmSimd.h
@@ -39,5 +39,5 @@
 .\objects\app_task.o: ..\..\app\app_motor.h
 .\objects\app_task.o: ..\..\app\app_vision.h
 .\objects\app_task.o: ..\..\bsp\bsp_led.h
-.\objects\app_task.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\math.h
-.\objects\app_task.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\stdlib.h
+.\objects\app_task.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\math.h
+.\objects\app_task.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\stdlib.h

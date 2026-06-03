@@ -14,6 +14,21 @@ extern float g_yaw;
 // 【新增】引入 main.c 中开机死等锁定的绝对直线参考目标角度
 extern float g_main_target_yaw;
 
+/**
+ * @brief  视觉丢失后，根据当前 yaw 自动选择最近的后向直线目标
+ */
+float Motor_Get_LostLine_Target_Yaw(float current_yaw)
+{
+    if (current_yaw >= 0.0f)
+    {
+        return 180.0f;
+    }
+    else
+    {
+        return -180.0f;
+    }
+}
+
 // 级联控制核心：三环之间内部交接的全局中间变量
 float g_turn_offset = 0.0f; // 角度环输出的差速调节量（内环直接提取）
 float g_base_speed  = 0.0f; // 基础前进期望速度
@@ -25,6 +40,8 @@ float g_base_speed  = 0.0f; // 基础前进期望速度
 // 1：激活视觉最外环，允许图像偏差拉扯航向（用于所有的过弯巡线 case）
 // 0：关闭视觉最外环，视觉彻底闭嘴，航向死死锁死（用于所有的盲跑、回正、等灯 case）
 uint8_t g_vision_enable = 0;
+
+
 
 /* 1. 内环速度环高级结构体*/
 typedef struct {
@@ -158,41 +175,67 @@ void Motor_Speed_Control_PID(void)
     
     // 总里程高精度累加（位置环的地基）
     g_odom_distance_count += (int32_t)real_L;
-
-    // ========================================================
+	
+// ========================================================
     // 2. 级联目标分配（20ms严格分频，拒绝与陀螺仪抢占打架）
     // ========================================================
     static uint8_t loop_div_20ms = 0;
+    static uint8_t lost_line_mode = 0;   // 1：视觉丢失保护模式
     loop_div_20ms++;
+
+    // 默认使用任务层下发的速度
+    float final_base_speed = g_base_speed;
     
     if (loop_div_20ms >= 2)
     {
         loop_div_20ms = 0; 
+
         float yaw_compensation = 0.0f;
-        
-        // 🚨【普适性绝杀】：不猜任务！只看上层下发的视觉使能开关
+        float final_target_yaw = g_main_target_yaw;
+  
+        // 只要任务层允许视觉，才检查视觉是否在线
         if (g_vision_enable == 1) 
         {
-            if (Vision_Check_Timeout() == 1) {
+            if (Vision_Check_Timeout() == 1) 
+            {
+                // 视觉正常：视觉外环输出航向补偿
                 yaw_compensation = Vision_Control_Loop(g_vision_info.Error_X);
-            } else {
-                // 视觉最外环发力，把像素偏差转化为航向角补偿量
-                yaw_compensation = 0.0f; 
+                final_target_yaw = g_main_target_yaw + yaw_compensation;
+
+                lost_line_mode = 0;
+            } 
+            else 
+            {
+                // 视觉丢失：强制回正到后向直线方向 ±180°
+                yaw_compensation = 0.0f;
+                final_target_yaw = Motor_Get_LostLine_Target_Yaw(g_yaw);
+
+                // 标记进入丢线保护模式
+                lost_line_mode = 1;
             }
         }
         else 
         {
-            // 状态机下令关闭视觉，补偿强行归 0，死死锁死纯陀螺仪方向
-            yaw_compensation = 0.0f; 
+            // 状态机下令关闭视觉：纯陀螺仪锁航向
+            yaw_compensation = 0.0f;
+            final_target_yaw = g_main_target_yaw;
+
+            lost_line_mode = 0;
         }
         
-        // 航向中环在中断内唯一安全执行：
-        g_turn_offset = Motor_Yaw_Control_Loop(g_main_target_yaw + yaw_compensation, g_yaw);
+        // 航向中环在中断内唯一安全执行
+        g_turn_offset = Motor_Yaw_Control_Loop(final_target_yaw, g_yaw);
     }
 
-    // 基础前进速度与差速项叠加分配（开机验证过的绝对顺行极性）
-    float target_L_temp = g_base_speed + g_turn_offset;
-    float target_R_temp = g_base_speed - g_turn_offset;
+    // 丢线后降速，减少左右晃动
+    if (lost_line_mode == 1 && g_vision_enable == 1)
+    {
+        final_base_speed = 3.5f;
+    }
+
+    // 基础前进速度与差速项叠加分配
+    float target_L_temp = final_base_speed + g_turn_offset;
+    float target_R_temp = final_base_speed - g_turn_offset;
 
     pid_L.Target_Speed = target_L_temp; 
     pid_R.Target_Speed = target_R_temp;

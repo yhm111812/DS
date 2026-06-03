@@ -2,7 +2,7 @@
 .\objects\stm32f4xx_pwr.o: ..\..\libraries\STM32F4xx_StdPeriph_Driver\inc\stm32f4xx_pwr.h
 .\objects\stm32f4xx_pwr.o: ..\..\libraries\CMSIS\Device\ST\STM32F4xx\Include\stm32f4xx.h
 .\objects\stm32f4xx_pwr.o: ..\..\libraries\CMSIS\Include\core_cm4.h
-.\objects\stm32f4xx_pwr.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+.\objects\stm32f4xx_pwr.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
 .\objects\stm32f4xx_pwr.o: ..\..\libraries\CMSIS\Include\core_cmInstr.h
 .\objects\stm32f4xx_pwr.o: ..\..\libraries\CMSIS\Include\core_cmFunc.h
 .\objects\stm32f4xx_pwr.o: ..\..\libraries\CMSIS\Include\core_cmSimd.h

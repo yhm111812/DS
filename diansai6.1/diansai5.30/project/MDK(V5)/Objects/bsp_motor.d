@@ -2,7 +2,7 @@
 .\objects\bsp_motor.o: ..\..\bsp\bsp_motor.h
 .\objects\bsp_motor.o: ..\..\libraries\CMSIS\Device\ST\STM32F4xx\Include\stm32f4xx.h
 .\objects\bsp_motor.o: ..\..\libraries\CMSIS\Include\core_cm4.h
-.\objects\bsp_motor.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+.\objects\bsp_motor.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
 .\objects\bsp_motor.o: ..\..\libraries\CMSIS\Include\core_cmInstr.h
 .\objects\bsp_motor.o: ..\..\libraries\CMSIS\Include\core_cmFunc.h
 .\objects\bsp_motor.o: ..\..\libraries\CMSIS\Include\core_cmSimd.h

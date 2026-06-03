@@ -1,10 +1,10 @@
 .\objects\main.o: ..\..\app\main.c
-.\objects\main.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
-.\objects\main.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\stdlib.h
+.\objects\main.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
+.\objects\main.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\stdlib.h
 .\objects\main.o: ..\..\board\board.h
 .\objects\main.o: ..\..\libraries\CMSIS\Device\ST\STM32F4xx\Include\stm32f4xx.h
 .\objects\main.o: ..\..\libraries\CMSIS\Include\core_cm4.h
-.\objects\main.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+.\objects\main.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
 .\objects\main.o: ..\..\libraries\CMSIS\Include\core_cmInstr.h
 .\objects\main.o: ..\..\libraries\CMSIS\Include\core_cmFunc.h
 .\objects\main.o: ..\..\libraries\CMSIS\Include\core_cmSimd.h

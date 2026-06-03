@@ -111,10 +111,10 @@ static void Run_Task_2(uint32_t current_time_ms)
         case 2: // B -> C (弯道巡线过弯)
             g_vision_enable = 1; // 激活视觉外环
             g_main_target_yaw = g_yaw; // 目标角度跟随当前，防止与视觉打架内耗
-            g_base_speed = 6.0f; 
+            g_base_speed = 15.0f; 
             
             // 里程达标且进入反向大范围
-            if (g_odom_distance_count >= CM_TO_PULSE(110.0f) && (g_yaw >= 140.0f || g_yaw <= -140.0f)) {
+            if (g_odom_distance_count >= CM_TO_PULSE(100.0f) && (g_yaw >= 140.0f || g_yaw <= -140.0f)) {
                 step = 3; led_timer = current_time_ms;
             }
             break;

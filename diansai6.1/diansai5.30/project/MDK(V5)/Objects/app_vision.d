@@ -1,6 +1,6 @@
 .\objects\app_vision.o: ..\..\app\app_vision.c
 .\objects\app_vision.o: ..\..\app\app_vision.h
-.\objects\app_vision.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+.\objects\app_vision.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
 .\objects\app_vision.o: ..\..\bsp\bsp_timer.h
 .\objects\app_vision.o: ..\..\libraries\CMSIS\Device\ST\STM32F4xx\Include\stm32f4xx.h
 .\objects\app_vision.o: ..\..\libraries\CMSIS\Include\core_cm4.h
@@ -37,4 +37,4 @@
 .\objects\app_vision.o: ..\..\libraries\STM32F4xx_StdPeriph_Driver\inc\stm32f4xx_dcmi.h
 .\objects\app_vision.o: ..\..\libraries\STM32F4xx_StdPeriph_Driver\inc\stm32f4xx_fsmc.h
 .\objects\app_vision.o: ..\..\board\board.h
-.\objects\app_vision.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\math.h
+.\objects\app_vision.o: E:\keil_v5\ARM\ARMCC\Bin\..\include\math.h
